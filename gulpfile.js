@@ -237,7 +237,7 @@ gulp.task('addgithooks', function() {
 });
 
 gulp.task('setup', function(cb) {
-  runSequence('bower', 'addgithooks', 'default', cb);
+  runSequence('bower', 'addgithooks', cb);
 });
 
 // Load custom tasks from the `tasks` directory

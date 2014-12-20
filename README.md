@@ -5,13 +5,12 @@
 1. `git clone https://github.com/GoogleChrome/ioweb2015.git`
 2. `cd ioweb2015`
 3. `npm install`
-4. `gulp setup`
 
 If you plan on modifying source code, be a good citizen and:
 
 1. Install [EditorConfig plugin](http://editorconfig.org/#download) for your favourite browser.
    The plugin should automatically pick up the [.editorconfig](.editorconfig) settings.
-2. Obey the pre-commit hook that's installed as part of `gulp setup`.
+2. Obey the pre-commit hook that's installed as part of the setup process.
    It will check for JavaScript and code style errors before committing to the `master` branch.
 
 ### Running
