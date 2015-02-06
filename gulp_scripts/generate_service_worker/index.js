@@ -25,6 +25,7 @@ module.exports = function(rootDir, handleFetch, importScripts, callback) {
     cacheId: 'iowebapp',
     dynamicUrlToDependencies: dynamicUrlToDependencies,
     handleFetch: handleFetch,
+    ignoreUrlParametersMatching: [/^utm_/, /^cache_bust$/],
     importScripts: importScripts,
     logger: util.log,
     staticFileGlobs: [
