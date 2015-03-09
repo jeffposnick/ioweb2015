@@ -135,6 +135,7 @@ gulp.task('copy-assets', function() {
     APP_DIR + '/elements/webgl-globe/shaders/*.{frag,vert}',
     APP_DIR + '/elements/webgl-globe/textures/*.{jpg,png}',
     APP_DIR + '/bower_components/webcomponentsjs/webcomponents.min.js',
+    APP_DIR + '/bower_components/firebase/firebase.js',
     APP_DIR + '/bower_components/es6-promise-2.0.1.min/index.js',
     DIST_EXPERIMENT_DIR + '/**/*'
   ], {base: './'});
@@ -192,6 +193,9 @@ gulp.task('concat-and-uglify-js', ['js', 'generate-page-metadata'], function() {
     'helper/service-worker-registration.js',
     'helper/history.js',
     'helper/router.js',
+    '../bower_components/firebase/firebase.js',
+    '../bower_components/es6-promise-2.0.1.min/index.js',
+    'scripts/helper/simple-db.js',
     'helper/request.js',
     'helper/picasa.js',
     'bootstrap.js'

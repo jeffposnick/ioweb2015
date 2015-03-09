@@ -182,32 +182,10 @@
     // Page-specific JS that runs when this page is loaded for the first time.
     function initPage() {
       var page = IOWA.Elements.Template.pages[IOWA.Elements.Template.selectedPage];
-      var socialPostsEndpoint = 'api/social';
-      var socialPostUpdateInterval = 30000; // 30 seconds
-      var updateSocialPostsTimeout;
+      var firebaseUrl = 'https://io2015.firebaseio.com';
 
       if (page.hasBeenLoaded) {
         return;
-      }
-
-      function updateSocialPosts() {
-        var xhr = new XMLHttpRequest();
-        xhr.open('GET', socialPostsEndpoint);
-        // The request will be intercepted by the service worker, which will use a network-first
-        // policy to ensure that the service worker cache is initially ignored.
-        // But if the device is offline, it will return the previously cached content.
-        xhr.setRequestHeader('X-Cache-Only', 'false');
-
-        xhr.onload = function() {
-          if (this.status < 400) {
-            processSocialPosts(JSON.parse(this.response));
-            // Schedule another automatic update if we got a successful response back.
-            updateSocialPostsTimeout = window.setTimeout(updateSocialPosts,
-              socialPostUpdateInterval);
-          }
-        };
-
-        xhr.send();
       }
 
       function processSocialPosts(socialPosts) {
@@ -216,9 +194,7 @@
       }
 
       page.load = function() {
-        IOWA.Request.cacheThenNetwork(socialPostsEndpoint, processSocialPosts, processSocialPosts);
-        // Set a timeout to fetch new posts after 30 seconds.
-        updateSocialPostsTimeout = window.setTimeout(updateSocialPosts, socialPostUpdateInterval);
+        IOWA.Request.firebaseOn(firebaseUrl, processSocialPosts);
 
         // Reset template variables for when revisiting the page.
         IOWA.Elements.Template.homeGlobeVisible = false;
@@ -227,10 +203,7 @@
       };
 
       page.unload = function() {
-        if (updateSocialPostsTimeout) {
-          window.clearTimeout(updateSocialPostsTimeout);
-          updateSocialPostsTimeout = null;
-        }
+        IOWA.Request.firebaseOff(firebaseUrl);
       };
 
       IOWA.Elements.Template.onGlobeLocationUpdate = function(e, detail, sender) {
