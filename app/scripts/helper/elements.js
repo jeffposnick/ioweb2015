@@ -83,6 +83,7 @@ IOWA.Elements = (function() {
     template.offsiteGlobeVisible = false;
     template.homeGlobeVisible = false;
     template.selectedCity = null;
+    template.offsiteMarkerResults = [];
 
     template.rippleColors = {
       'bg-cyan': '#00BCD4',
@@ -92,6 +93,10 @@ IOWA.Elements = (function() {
 
     template.mastheadBgClass = template.pages[template.selectedPage].mastheadBgClass;
     template.navBgClass = template.mastheadBgClass;
+
+    template.scrollLock = function(enable) {
+      document.body.classList.toggle('noscroll', enable);
+    };
 
     template.toggleVideoOverlayNav = function() {
       var nav = document.querySelector('.navbar__overlay--video');

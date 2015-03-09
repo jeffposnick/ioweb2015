@@ -20,6 +20,7 @@ limitations under the License.
 <script src="geometry.js"></script>
 <script src="sprite-geometry.js"></script>
 <script src="sol.js"></script>
+<script src="kd-tree.js"></script>
 
 <!--
 Makes a globe or whatever.
@@ -28,7 +29,7 @@ Makes a globe or whatever.
 
 @element webgl-globe
 -->
-<polymer-element name="webgl-globe" attributes="cameraDistance fov location locationTarget markers noDraw noInit offsetY scrollTarget scrollTriggered transitionDuration">
+<polymer-element name="webgl-globe" on-tap="{{handleTap}}" attributes="attractLoop cameraDistance fov location locationTarget markers noDraw noInit offsetY scrollTarget scrollTriggered transitionDuration">
   <template>
     <style>
       :host {
@@ -62,6 +63,7 @@ Makes a globe or whatever.
     var getSolarPosition = IOWA.WebglGlobe.getSolarPosition;
     var generateSpriteGeometry = IOWA.WebglGlobe.generateSpriteGeometry;
     var generateSpriteIndexArray = IOWA.WebglGlobe.generateSpriteIndexArray;
+    var KdTree = IOWA.WebglGlobe.KdTree;
 
     /**
      * Polyfilled performance.now. Only good for relative timing, not absolute.
@@ -86,13 +88,25 @@ Makes a globe or whatever.
      * Temporary vec3 Float32Array for passing values into WebGL.
      * @type {!Float32Array}
      */
-    var tmpVec0 = new Float32Array(3);
+    var tmp3Vec0 = new Float32Array(3);
 
     /**
      * Temporary vec3 Float32Array for passing values into WebGL.
      * @type {!Float32Array}
      */
-    var tmpVec1 = new Float32Array(3);
+    var tmp3Vec1 = new Float32Array(3);
+
+    /**
+     * Temporary vec3 Float32Array for passing values into WebGL.
+     * @type {!Float32Array}
+     */
+    var tmp3Vec2 = new Float32Array(3);
+
+    /**
+     * Temporary vec4 Float32Array used for mouse picking.
+     * @type {!Float32Array}
+     */
+    var tmpPicking4Vec = new Float32Array(4);
 
     Polymer({
       /**
@@ -117,6 +131,16 @@ Makes a globe or whatever.
        * @default false
        */
       noInit: false,
+
+      /**
+       * If true, puts the globe in an attract loop (automatically changing its
+       * own location) until location input comes externally.
+       *
+       * @attribute attractLoop
+       * @type bool
+       * @default false
+       */
+      attractLoop: false,
 
       /**
        * The latitude and longitude of the location to focus on.
@@ -295,6 +319,15 @@ Makes a globe or whatever.
       markerProgram_: null,
 
       /**
+       * Local radius of marker sprite, in multiples of the radius of the globe.
+       *
+       * @property markerSize_
+       * @type number
+       * @default 0.0075
+       */
+      markerSize_: 0.0075,
+
+      /**
        * ArrayBuffer for marker sprite geometry.
        *
        * @property markerArrayBuffer_
@@ -320,6 +353,15 @@ Makes a globe or whatever.
        * @default 0
        */
       markerDrawCount_: 0,
+
+      /**
+       * An acceleration structure for doing spatial queries on the markers.
+       *
+       * @property markerTree_
+       * @type KdTree
+       * @default null
+       */
+      markerTree_: null,
 
       /**
        * World to Normalized Device Coordinates transform.
@@ -412,6 +454,64 @@ Makes a globe or whatever.
        */
       resizeNeeded_: true,
 
+      /**
+       * The canvas's width in CSS pixels.
+       * @property canvasWidth_
+       * @type number
+       * @default 300
+       */
+      canvasWidth_: 300,
+
+      /**
+       * The canvas's height in CSS pixels.
+       * @property canvasHeight_
+       * @type number
+       * @default 150
+       */
+      canvasHeight_: 150,
+
+      /**
+       * Whether the mouse was clicked on the globe since the last update.
+       * @property mouseClicked_
+       * @type bool
+       * @default false
+       */
+      mouseClicked_: false,
+
+      /**
+       * The x coordinate of the last mouse click, relative to the top left of
+       * the `webgl-globe` element.
+       * @property lastClickX_
+       * @type number
+       * @default -1
+       */
+      lastClickX_: -1,
+
+      /**
+       * The y coordinate of the last mouse click, relative to the top left of
+       * the `webgl-globe` element.
+       * @property lastClickY_
+       * @type number
+       * @default -1
+       */
+      lastClickY: -1,
+
+      /**
+       * True if the last location change was caused by the attract loop.
+       * @property attractLocationChange_
+       * @type bool
+       * @default false
+       */
+      attractLocationChange_: false,
+
+      /**
+       * True if the attract loop is active but has been cancelled.
+       * @property attractLoopCancelled_
+       * @type bool
+       * @default false
+       */
+      attractLoopCancelled_: false,
+
       canvasResized: function() {
         this.resizeNeeded_ = true;
       },
@@ -474,6 +574,9 @@ Makes a globe or whatever.
       scrollTriggeredChanged: function() {
         if (this.scrollTriggered) {
           this.animate_ = true;
+          if (this.attractLoop) {
+            this.iterateAttractLoop();
+          }
           this.async(this.scheduleUpdate_);
         }
       },
@@ -554,6 +657,9 @@ Makes a globe or whatever.
             this.webglReady_ = true;
             if (this.markers) {
               this.initMarkerGeometry_();
+            }
+            if (this.attractLoop) {
+              this.iterateAttractLoop();
             }
             this.async(this.scheduleUpdate_);
           }.bind(this))
@@ -668,7 +774,8 @@ Makes a globe or whatever.
         var gl = this.gl;
 
         var startTime = nowish();
-        var spriteGeometry = generateSpriteGeometry(this.markers);
+        var spriteGeometry = generateSpriteGeometry(this.markers,
+            this.markerSize_);
         var spriteIndices = generateSpriteIndexArray(this.markers.length);
         var endTime = nowish();
 
@@ -693,6 +800,9 @@ Makes a globe or whatever.
             gl.FLOAT, false, 28, 16);
 
         this.markerDrawCount_ = spriteIndices.length;
+
+        // create acceleration structure for nearest-neighbor queries
+        this.markerTree_ = new KdTree(this.markers_);
       },
 
       markersChanged: function() {
@@ -711,6 +821,14 @@ Makes a globe or whatever.
       },
 
       locationChanged: function() {
+        // If the location isn't being changed by the attract loop, cancel the
+        // attract loop.
+        if (!this.attractLocationChange_) {
+          this.attractLoopCancelled_ = true;
+        } else {
+          this.attractLocationChange_ = false;
+        }
+
         // TODO(bckenny): for now, assume transition to current location has
         // been completed (so path is C0 but not C1).
         this.previousLocation_.lat = this.currentLocation_.lat;
@@ -731,6 +849,8 @@ Makes a globe or whatever.
         this.async(function() {
           this.fire('location-transitionend');
         }, null, this.transitionDuration);
+
+        this.scheduleUpdate_();
       },
 
       ease_: function(t) {
@@ -767,6 +887,8 @@ Makes a globe or whatever.
         this.projectionTransform_.identity()
           .perspective(this.fov, width / height, center - 1, center + 1);
 
+        this.canvasWidth_ = width;
+        this.canvasHeight_ = height;
         this.resizeNeeded_ = false;
       },
 
@@ -785,9 +907,11 @@ Makes a globe or whatever.
         if (timestamp - this.transitionStart_ < this.transitionDuration) {
           // TODO(bckenny): set animate_ = false when this is finished?
           this.interpolateLocation_(timestamp);
+        } else if (this.attractLoop) {
+          this.iterateAttractLoop();
         }
 
-        // globe to eye space
+        // Globe to camera space.
         var rotX = this.currentLocation_.lat - this.locationTarget.lat;
         var rotY = -this.currentLocation_.lng + this.locationTarget.lng;
         var worldTransform = tmpTransform0.identity()
@@ -797,7 +921,7 @@ Makes a globe or whatever.
 
         // Lighting is done in globe space, so figure out camera position there.
         var inverseWorld = tmpTransform1.invertAffine(worldTransform);
-        var cameraPosition = tmpVec1;
+        var cameraPosition = tmp3Vec1;
         cameraPosition[0] = inverseWorld.getElement(0, 3);
         cameraPosition[1] = inverseWorld.getElement(1, 3);
         cameraPosition[2] = inverseWorld.getElement(2, 3);
@@ -805,11 +929,27 @@ Makes a globe or whatever.
         // Since lighting is in canonical globe space, use a single MVPMatrix.
         worldTransform.product(this.projectionTransform_, worldTransform);
 
-        var sunDirection = getSolarPosition(new Date(), tmpVec0);
+        var sunDirection = getSolarPosition(new Date(), tmp3Vec0);
 
         this.renderGlobe_(worldTransform, cameraPosition, sunDirection);
 
+        // Render markers (if set) and handle mouse clicks on them.
+        var clickedMarkerIndex = -1;
         if (this.markerDrawCount_ > 0) {
+          if (this.mouseClicked_) {
+            this.mouseClicked_ = false;
+
+            // Find the click position on the globe (if any).
+            var pickedPoint = this.pickPoint(tmp3Vec2, this.lastClickX_,
+                this.lastClickY_, inverseWorld, cameraPosition);
+            if (pickedPoint) {
+              // Find the marker clicked on (if any).
+              var nearest = this.markerTree_.nearestNeighbor(pickedPoint[0],
+                  pickedPoint[1], pickedPoint[2], this.markerSize_);
+              clickedMarkerIndex = nearest.index;
+            }
+          }
+
           this.gl.enable(this.gl.BLEND);
           this.renderMarkers_(worldTransform);
           this.gl.disable(this.gl.BLEND);
@@ -817,6 +957,10 @@ Makes a globe or whatever.
 
         this.updateRequestId_ = 0;
         this.scheduleUpdate_();
+
+        if (clickedMarkerIndex > -1) {
+          this.fire('marker-click', {markerIndex: clickedMarkerIndex});
+        }
       },
 
       renderGlobe_: function(mvpTransform, cameraPosition, sunDirection) {
@@ -856,6 +1000,151 @@ Makes a globe or whatever.
 
         gl.drawElements(gl.TRIANGLES, this.markerDrawCount_, gl.UNSIGNED_SHORT,
             0);
+      },
+
+      iterateAttractLoop: function() {
+        if (this.attractLoop && !this.attractLoopCancelled_) {
+          // For the first stop, find a nice position relative to the sun.
+          var longitude, latitude;
+          if (this.location.lng === 0 && this.location.lat === 0) {
+            var sun = getSolarPosition(new Date(), tmp3Vec0);
+            longitude = Math.atan2(sun[0], sun[2]) * 180 / Math.PI;
+            longitude += 75;
+            if (longitude > 180) {
+              longitude -= 360;
+            }
+
+            latitude = Math.asin(sun[1]);
+          } else {
+            // After the first stop, randomly pick a nearby point.
+            latitude = Math.random() * 120 - 60;
+            longitude = this.location.lng - 50;
+
+            // Clamp to reasonable latitudes and longitudes.
+            latitude = Math.max(-60, Math.min(60, latitude));
+            if (longitude < -180) {
+              longitude += 360;
+            }
+
+            // If markers are defined, find the nearest to the random point.
+            if (this.markers) {
+              var nearest = this.getNearestMarker(latitude, longitude);
+              var nearestMarker = this.markers[nearest.index];
+              latitude = nearestMarker.lat;
+              longitude = nearestMarker.lng;
+            }
+          }
+
+          this.attractLocationChange_ = true;
+          this.location = {
+            lat: latitude,
+            lng: longitude
+          };
+        }
+      },
+
+      handleTap: function(e) {
+        this.mouseClicked_ = true;
+        var rect = this.$.canvas.getBoundingClientRect();
+        this.lastClickX_ = e.x - rect.left;
+        this.lastClickY_ = e.y - rect.top;
+
+        // If not animating anymore, need to trigger a draw to pick.
+        this.scheduleUpdate_();
+      },
+
+      pickPoint: function(destVec, canvasX, canvasY, inverseWorld, cameraPosition) {
+        var aspectRatio = this.canvasWidth_ / this.canvasHeight_;
+        var ndcX = 2 * canvasX / this.canvasWidth_ - 1;
+        var ndcY = 1 - 2 * canvasY / this.canvasHeight_;
+        // Correct for canvas aspect ratio.
+        if (aspectRatio > 1) {
+          ndcX *= aspectRatio;
+        } else {
+          ndcY /= aspectRatio;
+        }
+        var near = -1 / Math.tan(this.fov / 2);
+
+        // Find a point along click ray in camera space.
+        var cameraClick = tmpPicking4Vec;
+        cameraClick[0] = ndcX;
+        cameraClick[1] = ndcY;
+        cameraClick[2] = near;
+        cameraClick[3] = 1;
+
+        // Transform point back to globe space to find click direction there.
+        var globeClick = inverseWorld.transformVec4(cameraClick, cameraClick);
+        var globeRayX = globeClick[0] - cameraPosition[0];
+        var globeRayY = globeClick[1] - cameraPosition[1];
+        var globeRayZ = globeClick[2] - cameraPosition[2];
+        var length = Math.sqrt(globeRayX * globeRayX + globeRayY * globeRayY +
+            globeRayZ * globeRayZ);
+        globeRayX /= length;
+        globeRayY /= length;
+        globeRayZ /= length;
+
+        // Find intersection (if any) with globe.
+        // Project camera->globe ray onto click ray.
+        var s = -(cameraPosition[0] * globeRayX +
+            cameraPosition[1] * globeRayY +
+            cameraPosition[2] * globeRayZ);
+        if (s < 0) {
+          // Sphere is behind camera, so can't intersect.
+          // TODO(bckenny): Can never happen in our case
+          return null;
+        }
+        var cameraSqDistance = cameraPosition[0] * cameraPosition[0] +
+            cameraPosition[1] * cameraPosition[1] +
+            cameraPosition[2] * cameraPosition[2];
+        // Shortest distance from globe center to click ray.
+        var m2 = cameraSqDistance - s * s;
+        if (m2 > 1) {
+          // Ray passes outside the sphere's radius, so can't intersect.
+          return null;
+        }
+        var q = Math.sqrt(1 - m2);
+        // Camera is guaranteed to be outside of sphere, so closer intersection.
+        var t = s - q;
+
+        // Find intersect coordinates, t distance along globeRay from camera.
+        var clickRay = destVec;
+        clickRay[0] = cameraPosition[0] + t * globeRayX;
+        clickRay[1] = cameraPosition[1] + t * globeRayY;
+        clickRay[2] = cameraPosition[2] + t * globeRayZ;
+
+        return clickRay;
+      },
+
+      getNearestMarker: function(latitude, longitude) {
+        if (!this.markerTree_) {
+          return null;
+        }
+
+        var nearest = this.markerTree_.nearestNeighborByLatLng(latitude,
+            longitude);
+
+        // Calculate the approximate distance from input to point over surface
+        // of a spherical Earth. Uses the equatorial radius.
+        var angularDistance = 2 * Math.asin(nearest.distance / 2);
+        var approximateDistance = angularDistance * 6378;
+        nearest.distance = approximateDistance;
+
+        return nearest;
+      },
+
+      getMarkersWithinDistance: function(latitude, longitude, distanceKm) {
+        if (!this.markerTree_) {
+          return [];
+        }
+
+        var angularDistance = distanceKm / 6378;
+        var chordDistance = 2 * Math.sin(angularDistance / 2);
+
+        var neighbors = this.markerTree_.nearestNeighborsByLatLng(latitude,
+            longitude, chordDistance);
+
+        // TODO(bckenny): convert to distance over land?
+        return neighbors;
       }
     });
   })();

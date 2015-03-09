@@ -69,11 +69,21 @@ google-youtube {
       color: $color-cyan-A400;
     }
 
+    h4 {
+      position: absolute;
+      left: 0;
+    }
+
     core-icon {
       margin-right: $icon-margin;
     }
   }
+
+
   .search__map {
+    position: absolute;
+    top: 0;
+    right: 0;
     opacity: 0;
     visibility: hidden;
 
@@ -86,6 +96,70 @@ google-youtube {
     paper-input {
       width: 95vw;
     }
+  }
+
+  .marker-results {
+    position: absolute;
+    width: 350px;
+    max-height: 50%;
+    margin-top: 12px;
+    pointer-events: none;
+    overflow: auto;
+    transition: all 300ms cubic-bezier(0,0,0.2,1);
+    will-change: opacity, transform;
+    transform: translateY(-25px);
+    opacity: 0;
+
+    &.active {
+      pointer-events: auto;
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .card-content {
+      padding: $mobileKeyline;
+
+      .card__title {
+        padding-bottom: $mobileKeyline / 2;
+      }
+
+      h4 {
+        max-width: 92%;
+      }
+    }
+
+    a {
+      color: $color-cyan-A700;
+      text-transform: none;
+    }
+
+    .close-button {
+      position: absolute;
+      right: $mobileKeyline / 2;
+      top: $mobileKeyline / 2;
+      color: $color-gray;
+    }
+  }
+}
+
+@media (max-width: $phone-breakpoint-max) {
+  .marker-results {
+    width: 100% !important;
+    margin-top: $tabletKeyline !important;
+  }
+  .search__map {
+    left: $mobileKeyline;
+    right: $mobileKeyline !important;
+    top:  $mobileKeyline / 2 !important;
+  }
+  .action__links {
+    h4 {
+      top: 50px;
+      padding: $mobileKeyline;
+    }
+  }
+  .navbar__overlay--extended {
+    background-color: $color-bluegrey-700;
   }
 }
 
@@ -121,7 +195,8 @@ google-youtube {
     .action__links {
       position: absolute;
       top: $marginTop;
-      right: 32px;
+      left: $desktopKeyline;
+      right: $desktopKeyline;
       align-items: flex-end;
 
       core-icon {
@@ -129,15 +204,24 @@ google-youtube {
         margin-left: $icon-margin;
       }
 
-      .search__map {
-        position: absolute;
-        top: 0;
-        right: 0;
+      h4 {
+        max-width: 60%;
+      }
 
+      .view__events {
+        position: absolute;
+        right: 0;
+      }
+
+      .search__map {
         paper-input {
           width: 300px;
         }
       }
+    }
+
+    .marker-results {
+      left: $desktopKeyline;
     }
   }
 }
@@ -166,7 +250,12 @@ google-youtube {
 
     .action__links {
       top: $marginTop;
+      left: $largeKeyline;
       right: $largeKeyline;
+    }
+
+    .marker-results {
+      left: $largeKeyline;
     }
   }
 }
