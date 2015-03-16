@@ -197,6 +197,7 @@ gulp.task('concat-and-uglify-js', ['js', 'generate-page-metadata'], function() {
     '../bower_components/firebase/firebase.js',
     '../bower_components/es6-promise-2.0.1.min/index.js',
     'scripts/helper/simple-db.js',
+    'helper/firebase.js',
     'helper/request.js',
     'helper/picasa.js',
     'bootstrap.js'
@@ -213,6 +214,7 @@ gulp.task('concat-and-uglify-js', ['js', 'generate-page-metadata'], function() {
 
   var serviceWorkerScriptStream = gulp.src([
     APP_DIR + '/bower_components/shed/shed.js',
+    APP_DIR + '/scripts/helper/firebase.js',
     APP_DIR + '/scripts/shed/*.js'
   ])
     .pipe(reload({stream: true, once: true}))

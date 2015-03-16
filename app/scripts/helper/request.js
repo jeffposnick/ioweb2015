@@ -61,29 +61,7 @@ IOWA.Request = (function() {
     freshXhr.send();
   };
 
-  var firebaseOn = function(firebaseUrl, callback) {
-    simpleDB.open('IO_2015_FIREBASE').then(function(db) {
-      db.get(firebaseUrl).then(function(val) {
-        callback(val || []);
-      }).then(function() {
-        var firebaseRef = new Firebase(firebaseUrl);
-        firebaseRef.on('value', function(snapshot) {
-          var val = snapshot.val();
-          callback(val || []);
-          db.set(firebaseUrl, val || []);
-        });
-      });
-    });
-  };
-
-  var firebaseOff = function(firebaseUrl) {
-    var firebaseRef = new Firebase(firebaseUrl);
-    firebaseRef.off('value');
-  };
-
   return {
-    cacheThenNetwork: cacheThenNetwork,
-    firebaseOn: firebaseOn,
-    firebaseOff: firebaseOff
+    cacheThenNetwork: cacheThenNetwork
   };
 })();
