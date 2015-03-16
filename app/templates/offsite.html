@@ -60,7 +60,7 @@
       </div>
     </div>
 
-    <section class="page__section page__section--attend bg-dark-grey js-experiment-instrument">
+    <section class="page__section page__section--attend bg-dark-grey js-experiment-instrument {{ {'no-webgl': !webglSupported} | tokenList }}">
 
       <div class="marker-results">
         <div class="card marker-card">
@@ -72,12 +72,16 @@
                 <span><a href="//www.google.com/maps/place/{{marker.lat}},{{marker.lng}}" target="_blank">View in Google Maps</a></span>
                 <a href="{{marker.link}}" data-track-link="offsite-visit-eventpage" target="_blank">Event details</a>
               </div>
+              <div class="marker-card--closest">This is the closest event to your search.</div>
             </div>
           </template>
         </div>
       </div>
 
-      <h2 class="extended-title">Find an I/O Extended event near you</h2>
+      <h2 class="extended-title" hidden?="{{!webglSupported}}">Find an I/O Extended event near you</h2>
+      <template if="{{!webglSupported}}">
+        <h2 class="extended-title">Searching for events is not supported in your browser :(</h2>
+      </template>
 
       <div class="action__links" layout vertical>
         <template if="{{extendedMapActive && didExtendedSearch && !offsiteMarkerResults.length}}">
@@ -87,10 +91,10 @@
         <!-- <paper-button data-track-link="offsite-notify-me">
           <core-icon icon="io:notifications-none"></core-icon><i18n-msg msgid="notifyme">Notify me about 2015 events near me</i18n-msg>
         </paper-button> -->
-        <paper-button class="view__events" on-tap="{{openExtendedMap}}">
+        <paper-button class="view__events" on-tap="{{openExtendedMap}}" hidden?="{{!webglSupported}}">
           <a href="#" data-track-link="offsite-view-2015-events"><core-icon icon="io:place"></core-icon>Find 2015 events</a>
         </paper-button>
-        <div class="search__map" layout horizontal center self-center relative>
+        <div class="search__map" layout horizontal center self-center relative hidden?="{{!webglSupported}}">
           <core-icon icon="io:search"></core-icon>
           <paper-input id="autocomplete" label="Search for a location"></paper-input>
         </div>
@@ -110,7 +114,8 @@
                      scrollTarget="{{ScrollContainer}}"
                      scrollTriggered="{{offsiteGlobeVisible}}"
                      noInit?="{{!pageTransitionDone}}"
-                     noDraw?="{{mode === 'active'}}"></webgl-globe>
+                     noDraw?="{{mode === 'active'}}"
+                     webglSupported="{{webglSupported}}"></webgl-globe>
 
         <core-ajax url="api/extended" handleAs="json"
                    auto?="{{pageTransitionDone && !offsiteLocations}}"
@@ -203,8 +208,8 @@
 
       var animation = new AnimationGroup([
         new Animation(viewButton, [
-          {opacity: 1, visibility: 'visible'},
-          {opacity: 0, visibility: 'hidden'}
+          {opacity: 1, visibility: 'visible', 'pointer-events': 'auto'},
+          {opacity: 0, visibility: 'hidden', 'pointer-events': 'none'}
         ], animationTiming),
         new Animation(sectionTitle, [
           {opacity: 1, visibility: 'visible'},
@@ -259,18 +264,19 @@
         IOWA.Elements.Template.fullscreenVideoActive = false;
         IOWA.Elements.Template.extendedMapActive = false;
         IOWA.Elements.Template.didExtendedSearch = false;
+        IOWA.Elements.Template.webglSupported = true;
         IOWA.Elements.Template.offsiteMarkerResults= [];
 
         // Offsite event search radius in kilometers.
         IOWA.Elements.Template.offsiteSearchRadius = 80;
 
         if (location.hash.substring(1) === 'join') {
-          var onPageTransitionDone_ = function(e) {
+          var onGlobeReady_ = function(e) {
             IOWA.Elements.Template.openExtendedMap(800);
-            document.removeEventListener('page-transition-done', onPageTransitionDone_);
+            document.removeEventListener('globe-webgl-init', onGlobeReady_);
           };
 
-          document.addEventListener('page-transition-done', onPageTransitionDone_);
+          document.addEventListener('globe-webgl-init', onGlobeReady_);
         }
       };
 
@@ -300,6 +306,11 @@
 
       IOWA.Elements.Template.closeExtendedMapSection = function(e, detail, sender) {
         this.scrollLock(false);
+        // Make globe check its size when scrollbars are added to the page.
+        var globe = IOWA.Elements.Main.querySelector('webgl-globe');
+        if (globe) {
+          globe.canvasResized();
+        }
         this.resetExtendedSearch();
 
         runExtendedMapAnimation(true, function() {
@@ -314,7 +325,17 @@
         // Smooth scroll to globe section.
         var destEl = IOWA.Elements.Main.querySelector('.page__section--attend');
         IOWA.Util.smoothScroll(destEl, scrollDuration, function() {
+          if (!IOWA.Elements.Template.webglSupported) {
+            return;
+          }
+
           IOWA.Elements.Template.scrollLock(true);
+
+          // Make globe check its size when scrollbars are removed from the page.
+          var globe = IOWA.Elements.Main.querySelector('webgl-globe');
+          if (globe) {
+            globe.canvasResized();
+          }
 
           IOWA.Elements.Template.extendedMapActive = true;
           IOWA.Elements.Template.offsiteMarkerResults= [];
@@ -352,7 +373,15 @@
 
           IOWA.Elements.Template.didExtendedSearch = true;
 
-          IOWA.Elements.Main.querySelector('.marker-results').classList.add('active');
+          // Wait a rAF so marker cards are stamped.
+          this.async(function() {
+            // Only add .show "closest match" message to the first card.
+            var closest = IOWA.Elements.Main.querySelector('.marker-card--closest');
+            if (closest) {
+              closest.classList.add('show');
+            }
+            IOWA.Elements.Main.querySelector('.marker-results').classList.add('active');
+          });
 
           IOWA.Analytics.trackEvent('globe', 'place select', place.name);
         }.bind(this));
@@ -360,12 +389,22 @@
 
       IOWA.Elements.Template.resetExtendedSearch = function(e, detail, sender) {
         IOWA.Elements.Main.querySelector('.marker-results').classList.remove('active');
+        var closest = IOWA.Elements.Main.querySelector('.marker-card--closest');
+        if (closest) {
+          closest.classList.remove('show');
+        }
         document.querySelector('.page__section--attend #autocomplete').value = null;
         IOWA.Elements.Template.didExtendedSearch = false;
       };
 
       IOWA.Elements.Template.onMarkerClick = function(e, detail, sender) {
         e.stopPropagation();
+
+        // Remove "closest match" message from the first card.
+        var closest = IOWA.Elements.Main.querySelector('.marker-card--closest');
+        if (closest) {
+          closest.classList.remove('show');
+        }
 
         var centerLocation = this.offsiteLocations[e.detail.markerIndex];
 
@@ -393,7 +432,7 @@
           focusLocation.call(this);
         }
 
-        IOWA.Analytics.trackEvent('globe', 'marker click');
+        IOWA.Analytics.trackEvent('globe', 'marker click', centerLocation.name);
       };
 
       page.load(); // Run load callback on page load.

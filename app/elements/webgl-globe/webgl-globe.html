@@ -29,7 +29,24 @@ Makes a globe or whatever.
 
 @element webgl-globe
 -->
-<polymer-element name="webgl-globe" on-tap="{{handleTap}}" attributes="attractLoop cameraDistance fov location locationTarget markers noDraw noInit offsetY scrollTarget scrollTriggered transitionDuration">
+<!--
+Fired when the globe arrives at a new location.
+
+@event location-transitionend
+-->
+<!--
+Fired when when a location marker is clicked.
+
+@event marker-click
+-->
+<!--
+Fired when the globe's webgl context has been initialized or it failed to initialize.
+
+@event globe-webgl-init
+@param {Object} detail
+  @param {bool} detail.error True if webgl could not be initialized.
+-->
+<polymer-element name="webgl-globe" on-tap="{{handleTap}}" attributes="attractLoop cameraDistance fov location locationTarget markers noDraw noInit offsetY scrollTarget scrollTriggered transitionDuration webglSupported">
   <template>
     <style>
       :host {
@@ -64,6 +81,8 @@ Makes a globe or whatever.
     var generateSpriteGeometry = IOWA.WebglGlobe.generateSpriteGeometry;
     var generateSpriteIndexArray = IOWA.WebglGlobe.generateSpriteIndexArray;
     var KdTree = IOWA.WebglGlobe.KdTree;
+
+    var IS_IOS = (/(iPhone|iPad|iPod)/gi).test(navigator.platform);
 
     /**
      * Polyfilled performance.now. Only good for relative timing, not absolute.
@@ -228,6 +247,15 @@ Makes a globe or whatever.
        * @default 4000
        */
       transitionDuration: 4000,
+
+      /**
+       * Whether WebGL is supported and the globe rendering can be initialized
+       * in this browser.
+       * @attribute webglSupported
+       * @type bool
+       * @default true
+       */
+      webglSupported: 'WebGLRenderingContext' in window,
 
       /**
        * The pixel threshold in the parent scrollTarget at which to start
@@ -514,6 +542,7 @@ Makes a globe or whatever.
 
       canvasResized: function() {
         this.resizeNeeded_ = true;
+        this.scheduleUpdate_();
       },
 
       created: function() {
@@ -530,8 +559,8 @@ Makes a globe or whatever.
 
       attached: function() {
         // Start loading assets even if WebGL initialization will be delayed.
-        this.loadingTextures_ = this.loadCubeMapTextures_('albedo', '.jpg');
-        this.loadingNightTextures_ = this.loadCubeMapTextures_('night', '.png');
+        this.loadingTextures_ = this.loadCubeMapTextures_('albedo', 1024, '.jpg');
+        this.loadingNightTextures_ = this.loadCubeMapTextures_('night', 1024, '.png');
         this.loadingShaders_ = this.loadShaders_();
 
         if (!this.noInit) {
@@ -598,7 +627,9 @@ Makes a globe or whatever.
 
           if (!gl) {
             IOWA.Analytics.trackEvent('globe', 'webgl unsupported');
-            // TODO(bckenny): give up
+            this.webglSupported = false;
+            this.fire('globe-webgl-init', {error: true});
+
             return;
           }
         }
@@ -631,11 +662,21 @@ Makes a globe or whatever.
 
         this.globeDrawCount = globeIndices.length;
 
+        // A bug in OS X Intel GPU drivers limits some machines to 512x512
+        // cube map textures. See
+        // https://github.com/GoogleChrome/ioweb2015/issues/754. If that's the
+        // case, start with blank (null) textures and load a downgraded texture
+        // further down the pipeline.
+        var maxCubeSize = gl.getParameter(gl.MAX_CUBE_MAP_TEXTURE_SIZE);
+        var cubeMapDowngradeRequired = maxCubeSize < 1024;
+        var processCubeMap = cubeMapDowngradeRequired ?
+            function() { return null; } : this.initCubeMap_.bind(this);
+
         // After loading, initialize textures and shaders and begin render loop.
         Promise.all([
           this.loadingShaders_,
-          this.loadingTextures_.then(this.initCubeMap_.bind(this)),
-          this.loadingNightTextures_.then(this.initCubeMap_.bind(this))
+          this.loadingTextures_.then(processCubeMap),
+          this.loadingNightTextures_.then(processCubeMap)
         ])
           .then(function assetsLoaded(assets) {
             this.globeProgram = new ShaderProgram(this.gl, assets[0][0],
@@ -646,6 +687,7 @@ Makes a globe or whatever.
             this.globeCubeMap = assets[1];
             gl.activeTexture(gl.TEXTURE0);
             gl.bindTexture(gl.TEXTURE_CUBE_MAP, this.globeCubeMap);
+
             this.nightCubeMap = assets[2];
             gl.activeTexture(gl.TEXTURE1);
             gl.bindTexture(gl.TEXTURE_CUBE_MAP, this.nightCubeMap);
@@ -653,6 +695,11 @@ Makes a globe or whatever.
             this.markerProgram_ = new ShaderProgram(this.gl, assets[0][2],
                 assets[0][3]);
             this.markerProgram_.use();
+
+            // Free references to image-loading/XHR promises.
+            this.loadingNightTextures_ = null;
+            this.loadingTextures_ = null;
+            this.loadingShaders_ = null;
 
             this.webglReady_ = true;
             if (this.markers) {
@@ -662,10 +709,17 @@ Makes a globe or whatever.
               this.iterateAttractLoop();
             }
             this.async(this.scheduleUpdate_);
+
+            this.fire('globe-webgl-init', {error: false});
+
+            if (cubeMapDowngradeRequired) {
+              return this.adjustCubemapResolution_(512);
+            }
           }.bind(this))
           .catch(function(reason) {
-            // TODO(bckenny): give up
             IOWA.Analytics.trackError('globe initialization', reason);
+            this.webglSupported = false;
+            this.fire('globe-webgl-init', {error: true});
           });
       },
 
@@ -695,7 +749,7 @@ Makes a globe or whatever.
         }, this));
       },
 
-      loadCubeMapTextures_: function(prefix, extname) {
+      loadCubeMapTextures_: function(prefix, size, extname) {
         // Cubemap GLenum constants from WebGL spec.
         var globeFaces = {
           'negative-x': 0x8516,
@@ -718,7 +772,7 @@ Makes a globe or whatever.
                 });
               };
               textureImage.onerror = reject;
-              var filename = prefix + '-' + faceName + extname;
+              var filename = prefix + '-' + size + '-' + faceName + extname;
               textureImage.src = this.resolvePath('textures/' + filename);
             }.bind(this));
           }, this)
@@ -768,6 +822,26 @@ Makes a globe or whatever.
             this.MAX_PERF_TIMEOUT_);
 
         return textureId;
+      },
+
+      adjustCubemapResolution_: function(requestedSize) {
+        // Load a cube map texture set of a different resolution.
+        return this.loadCubeMapTextures_('albedo', requestedSize, '.jpg')
+          .then(this.initCubeMap_.bind(this))
+          .then(function(newCubeMap) {
+            this.globeCubeMap = newCubeMap;
+            this.gl.activeTexture(this.gl.TEXTURE0);
+            this.gl.bindTexture(this.gl.TEXTURE_CUBE_MAP, this.globeCubeMap);
+            this.gl.activeTexture(this.gl.TEXTURE1);
+
+            return this.loadCubeMapTextures_('night', requestedSize, '.png');
+          }.bind(this))
+          .then(this.initCubeMap_.bind(this))
+          .then(function(newNightCubeMap) {
+            this.nightCubeMap = newNightCubeMap;
+            this.gl.activeTexture(this.gl.TEXTURE1);
+            this.gl.bindTexture(this.gl.TEXTURE_CUBE_MAP, this.nightCubeMap);
+          }.bind(this));
       },
 
       initMarkerGeometry_: function() {
@@ -820,6 +894,14 @@ Makes a globe or whatever.
             Math.cos(lat0) * Math.cos(lat1) * Math.cos(deltaLng));
       },
 
+      getTransitionTime_: function() {
+        // A modification of the duration (ms) over which transitions between
+        // locations should occur. Slows down the attract loop to 6x the normal
+        // trasition time.
+        var multiplier = (this.attractLoop && !this.attractLoopCancelled_) ? 6 : 1;
+        return this.transitionDuration * multiplier;
+      },
+
       locationChanged: function() {
         // If the location isn't being changed by the attract loop, cancel the
         // attract loop.
@@ -848,7 +930,7 @@ Makes a globe or whatever.
         // Tell everyone we've arrived at the new location.
         this.async(function() {
           this.fire('location-transitionend');
-        }, null, this.transitionDuration);
+        }, null, this.getTransitionTime_());
 
         this.scheduleUpdate_();
       },
@@ -863,7 +945,7 @@ Makes a globe or whatever.
 
       interpolateLocation_: function(timestamp) {
         var elapsedTime = timestamp - this.transitionStart_;
-        var t = Math.max(0, Math.min(1, elapsedTime / this.transitionDuration));
+        var t = Math.max(0, Math.min(1, elapsedTime / this.getTransitionTime_()));
         t = this.ease_(t);
 
         // TODO(bckenny): for now, just lerp in latlng space.
@@ -875,7 +957,8 @@ Makes a globe or whatever.
 
       resize_: function() {
         var canvas = this.$.canvas;
-        var resolutionScale = window.devicePixelRatio > 1 ? 2 : 1;
+        // Force iOS to dPR 1: See github.com/GoogleChrome/ioweb2015/issues/751.
+        var resolutionScale = window.devicePixelRatio > 1 && !IS_IOS ? 2 : 1;
         var width = canvas.offsetWidth;
         var height = canvas.offsetHeight;
         canvas.width = width * resolutionScale;
@@ -904,7 +987,7 @@ Makes a globe or whatever.
         if (this.resizeNeeded_) {
           this.resize_();
         }
-        if (timestamp - this.transitionStart_ < this.transitionDuration) {
+        if (timestamp - this.transitionStart_ < this.getTransitionTime_()) {
           // TODO(bckenny): set animate_ = false when this is finished?
           this.interpolateLocation_(timestamp);
         } else if (this.attractLoop) {
@@ -1006,7 +1089,8 @@ Makes a globe or whatever.
         if (this.attractLoop && !this.attractLoopCancelled_) {
           // For the first stop, find a nice position relative to the sun.
           var longitude, latitude;
-          if (this.location.lng === 0 && this.location.lat === 0) {
+          var currentLoc = this.location;
+          if (currentLoc.lng === 0 && currentLoc.lat === 0) {
             var sun = getSolarPosition(new Date(), tmp3Vec0);
             longitude = Math.atan2(sun[0], sun[2]) * 180 / Math.PI;
             longitude += 75;
@@ -1016,22 +1100,30 @@ Makes a globe or whatever.
 
             latitude = Math.asin(sun[1]);
           } else {
-            // After the first stop, randomly pick a nearby point.
-            latitude = Math.random() * 120 - 60;
-            longitude = this.location.lng - 50;
+            // After the first stop, randomly pick a nearby point (or marker, if
+            // any). In the case of markers, try increasingly far random
+            // longitudes in case the same marker keeps being selected.
+            for (var i = 1; i < 5; i++) {
+              latitude = Math.random() * 120 - 60;
+              longitude = currentLoc.lng - i * 55;
 
-            // Clamp to reasonable latitudes and longitudes.
-            latitude = Math.max(-60, Math.min(60, latitude));
-            if (longitude < -180) {
-              longitude += 360;
-            }
+              // Clamp to reasonable latitudes and longitudes.
+              latitude = Math.max(-60, Math.min(60, latitude));
+              if (longitude < -180) {
+                longitude += 360;
+              }
 
-            // If markers are defined, find the nearest to the random point.
-            if (this.markers) {
-              var nearest = this.getNearestMarker(latitude, longitude);
-              var nearestMarker = this.markers[nearest.index];
-              latitude = nearestMarker.lat;
-              longitude = nearestMarker.lng;
+              // If markers are defined, find the nearest to the random point.
+              if (this.markers) {
+                var nearest = this.getNearestMarker(latitude, longitude);
+                var nearestMarker = this.markers[nearest.index];
+                latitude = nearestMarker.lat;
+                longitude = nearestMarker.lng;
+              }
+
+              if (latitude !== currentLoc.lat && longitude !== currentLoc.lng) {
+                break;
+              }
             }
           }
 
