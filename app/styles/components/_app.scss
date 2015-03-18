@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-$hashWidth: 83px;
+@import '../base/_vars';
 
 html, body {
   font-family: 'Helvetica', 'Arial', 'sans-serif';
@@ -236,6 +236,10 @@ h6 {
 
     a {
       color: inherit;
+
+      &:focus {
+        outline-color: white;
+      }
     }
   }
 }
@@ -324,6 +328,9 @@ h6 {
   }
 }
 
+.core-overlay-backdrop {
+  opacity: 0.4 !important;
+}
 
 @media (max-width: $phone-breakpoint-max) {
   .io-countdown {
