@@ -66,4 +66,13 @@
   } else {
     document.addEventListener('polymer-ready', afterImports);
   }
+
+  document.addEventListener('visibilitychange', function() {
+    if (document.hidden) {
+      // Disconnect from Firebase's WebSocket when the current tab isn't visible.
+      Firebase.goOffline();
+    } else {
+      Firebase.goOnline();
+    }
+  });
 })();

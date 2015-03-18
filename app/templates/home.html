@@ -205,16 +205,27 @@
         return;
       }
 
+      function descendingSort(a, b) {
+        if (a < b) {
+          return 1;
+        }
+        if (a > b) {
+          return -1;
+        }
+        return 0;
+      }
+
       function processSocialPosts(socialPosts) {
-        // Only show the first 3 posts.
-        IOWA.Elements.Template.socialPosts = socialPosts.slice(0, 3);
+        IOWA.Elements.Template.socialPosts = Object.keys(socialPosts).sort(descendingSort).map(function(key) {
+          return socialPosts[key];
+        });
       }
 
       page.load = function() {
-        IOWA.Firebase.getRefUrlPromise(IOWA.Firebase.datasets.SOCIAL).then(function(url) {
+        IOWA.Firebase.refUrlPromise(IOWA.Firebase.datasets.SOCIAL).then(function(url) {
           if (url) {
             socialRefUrl = url;
-            IOWA.Firebase.firebaseOn(socialRefUrl, processSocialPosts);
+            IOWA.Firebase.firebaseOn(socialRefUrl, processSocialPosts, 3);
           }
         });
 
